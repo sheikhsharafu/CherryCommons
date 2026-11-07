@@ -17,8 +17,36 @@ and runs over HTTP with the dependencies included in this folder.
 
 Click the floor, then move with the arrow keys or WASD. Walk onto a table mat
 to sit and press a movement key to stand. Use **Manage tables** to edit tables
-and add meeting links. The demo sign-in is `admin` / `root`. This is a
-browser-only gate for local editing. Each browser stores its own table changes.
+and add meeting links. When the publishable key is blank, the app runs locally
+and the demo sign-in is `admin` / `root`.
+
+## Enable live counts and a shared directory
+
+The Supabase project URL and publishable key are set in
+`src/supabase-config.js`. Complete these steps in your Supabase project before
+publishing the shared version.
+
+1. In **SQL Editor**, open a new query, paste the contents of
+   `supabase-setup.sql`, and run it. This creates the shared directory, seeds
+   the numbered tables, and restricts edits to approved organizers.
+2. In **Authentication → Users**, create or choose a confirmed email/password
+   user for the organizer and copy its **User UID**. In **SQL Editor**, run the
+   organizer command at the bottom of `supabase-setup.sql` without the comment
+   markers and with your User UID in place of the placeholder.
+3. Keep **Realtime** and **Allow public access to channels** enabled in the
+   Supabase Realtime settings for this public site. Publish the updated files
+   to GitHub Pages, open **Manage tables**, and sign in as the organizer.
+
+Shared imports, edits, deletions, order, and closed times are published to all
+visitors. The directory is publicly readable, so use meeting links intended
+for public access. Previously imported local lists can be re-uploaded from
+their original files after you sign in to the shared directory.
+
+Open the site in a regular and private window and click **Enter commons** in
+both. Check that the directory shows **2 online**, then sit at a table and
+check its seat count in the other window. Presence counts open sessions.
+They show seats occupied in the app. Simultaneous arrivals on different
+devices can race because admission is not enforced by the database.
 
 ## Delete multiple tables
 
@@ -61,7 +89,8 @@ updates an existing table with the same name, regardless of case. An unnamed
 entry with a matching link is skipped. An invalid entry stops the import
 before any changes are saved.
 
-Files are read and imports are saved in the browser. Each file can contain
+Files are read in the browser. In shared mode, confirmed imports are saved to
+the shared directory. Each file can contain
 up to 500 meeting entries and be up to 1 MB.
 
 ## Publish with GitHub Pages
@@ -73,11 +102,8 @@ up to 500 meeting entries and be up to 1 MB.
 
 [GitHub Pages publishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
-The numbered starter tables come without meeting links. To set shared defaults,
-edit `createDefaultTables()` in `src/app.js` and use links intended for public access.
-Anything committed there is visible in the published site’s source.
-
-The app opens meetings in provider tabs and saves table edits in the browser.
+The app opens meetings in provider tabs. With Supabase configured, use
+**Manage tables** to set shared defaults.
 
 ## Project files
 
@@ -85,7 +111,10 @@ The app opens meetings in provider tabs and saves table edits in the browser.
 | --- | --- |
 | `index.html` | App entry page |
 | `src/styles.css` | Interface styles |
-| `src/app.js` | Avatar, map, room management, and meeting links |
+| `src/app.js` | Avatar, map, table management, and meeting links |
+| `src/supabase-config.js` | Public Supabase project settings |
+| `src/shared-commons.js` | Organizer sign-in, directory sync, and presence |
+| `supabase-setup.sql` | One-time database and permissions setup |
 | `src/meeting-import.js` | File parsing and normalization for meeting table imports |
 | `src/workbook-worker.js` | Reads spreadsheet files in a browser worker |
 | `vendor/runtime.js` | Bundled React, React DOM, Scheduler, and Phaser |
