@@ -2,6 +2,7 @@ import { React, jsxRuntime, createRoot, Phaser } from "../vendor/runtime.js";
 import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
 import { RoomExperience, invitationFromLocation } from "./rooms.js";
 import { roomRequest } from "./room-api.js";
+import { useRoomPresence } from "./room-presence.js";
 
       function bootCherryCommons() {
         /* Map appearance and drawing helpers */
@@ -899,125 +900,6 @@ import { roomRequest } from "./room-api.js";
               h: 110,
             };
           });
-        }
-
-        const PRESENCE_TIMEOUT = 90_000;
-
-        function readSeatCounts(prefix, ownKey) {
-          const counts = Object.create(null);
-          const now = Date.now();
-          for (const key of Object.keys(localStorage)) {
-            if (key === ownKey || !key.startsWith(prefix)) continue;
-            let record;
-            try { record = JSON.parse(localStorage.getItem(key)); } catch { continue; }
-            if (typeof record?.desk !== "string" || !(record.until > now)) continue;
-            counts[record.desk] = (counts[record.desk] ?? 0) + 1;
-          }
-          return counts;
-        }
-
-        function writeSeat(key, table) {
-          localStorage.setItem(key, JSON.stringify({ desk: table, until: Date.now() + PRESENCE_TIMEOUT }));
-        }
-
-        // The lock keeps two tabs from claiming the last seat at the same time.
-        async function claimSeat(prefix, key, table, getCapacity, isCurrent) {
-          try {
-            if (!navigator.locks) return "unavailable";
-            return await navigator.locks.request(prefix + "admission", () => {
-              if (!isCurrent()) return "cancelled";
-              const capacity = getCapacity();
-              if (!capacity) return "closed";
-              if ((readSeatCounts(prefix, key)[table] ?? 0) >= capacity) return "full";
-              writeSeat(key, table);
-              return "joined";
-            });
-          } catch {
-            return "unavailable";
-          }
-        }
-
-        function useTablePresence(roomId, onSeatReset) {
-          const sitePath = new URL(".", location.href).pathname;
-          const prefix = `cc.seat.room.${encodeURIComponent(sitePath)}.${roomId}.`;
-          const [key] = React.useState(() => prefix + (crypto.randomUUID?.() ?? createId("visitor")));
-          const seat = React.useRef(null);
-          const [counts, setCounts] = React.useState({});
-
-          const refresh = React.useCallback(() => {
-            let next;
-            try { next = readSeatCounts(prefix); } catch { return; }
-            setCounts((previous) =>
-              Object.keys(next).length === Object.keys(previous).length &&
-              Object.keys(next).every((table) => next[table] === previous[table])
-                ? previous : next,
-            );
-          }, [prefix]);
-
-          const clearSeat = React.useCallback(() => {
-            seat.current = null;
-            try { localStorage.removeItem(key); } catch {}
-          }, [key]);
-
-          const releaseSeat = React.useCallback(() => {
-            clearSeat();
-            refresh();
-          }, [clearSeat, refresh]);
-
-          React.useEffect(() => {
-            function resetForPageHide() {
-              onSeatReset(false);
-              clearSeat();
-            }
-            function sync(event) {
-              if (!event.key || event.key.startsWith(prefix)) refresh();
-            }
-            async function renew() {
-              try {
-                if (seat.current) {
-                  await navigator.locks.request(prefix + "admission", () => {
-                    if (!seat.current) return;
-                    const record = JSON.parse(localStorage.getItem(key));
-                    if (record?.desk === seat.current && record.until > Date.now()) {
-                      writeSeat(key, seat.current);
-                    } else {
-                      clearSeat();
-                      onSeatReset(true);
-                    }
-                  });
-                }
-              } catch {
-                clearSeat();
-                onSeatReset(true);
-              }
-              refresh();
-            }
-            const timer = setInterval(renew, 15_000);
-            window.addEventListener("storage", sync);
-            window.addEventListener("pagehide", resetForPageHide);
-            window.addEventListener("pageshow", refresh);
-            document.addEventListener("visibilitychange", renew);
-            refresh();
-            return () => {
-              clearInterval(timer);
-              window.removeEventListener("storage", sync);
-              window.removeEventListener("pagehide", resetForPageHide);
-              window.removeEventListener("pageshow", refresh);
-              document.removeEventListener("visibilitychange", renew);
-              clearSeat();
-            };
-          }, [prefix, key, clearSeat, onSeatReset, refresh]);
-
-          return {
-            counts,
-            releaseSeat,
-            async reserveSeat(table, getCapacity, isCurrent) {
-              const result = await claimSeat(prefix, key, table, getCapacity, isCurrent);
-              if (result === "joined") seat.current = table;
-              refresh();
-              return result;
-            },
-          };
         }
 
         function TablePages({ page, count, onChange }) {
@@ -2440,7 +2322,8 @@ import { roomRequest } from "./room-api.js";
             sceneRef.current?.leaveTable();
             if (expired) setBanner("Your seat expired. Walk onto the table mat to try again.");
           }, []);
-          const { counts, reserveSeat, releaseSeat } = useTablePresence(room.id, resetSeat);
+          const { counts, visitors, presenceError, reserveSeat, releaseSeat } =
+            useRoomPresence(room.id, profile.name, resetSeat, onLeaveRoom);
           const meetingController = React.useMemo(
             () => new MeetingController(setMeetingState),
             [],
@@ -2520,17 +2403,15 @@ import { roomRequest } from "./room-api.js";
               me: profile,
               roomName: () => directoryRef.current.room.name,
               reserveTable: (id, isCurrent) => {
-                const tableCapacity = () => {
-                  const config = storeRef.current.getConfig();
-                  const table = config.tables.find((item) => item.id === id);
-                  return table && getTableSchedule(table, new Date(), config.tz).open ? table.capacity : null;
-                };
-                return reserveSeat(id, tableCapacity, () => active && isCurrent());
+                const config = storeRef.current.getConfig();
+                const table = config.tables.find((item) => item.id === id);
+                if (!table || !getTableSchedule(table, new Date(), config.tz).open) return "closed";
+                return reserveSeat(id, () => active && isCurrent());
               },
               onSeatDenied: (table, result) => {
                 if (result === "full") setBanner(`${table.name} is full. Try again when a seat opens.`);
                 if (result === "closed") setBanner(`${table.name} is closed.`);
-                if (result === "unavailable") setBanner("Seat availability could not be checked. Open this page in a modern browser over HTTPS or on localhost.");
+                if (result === "unavailable") setBanner("Seat availability could not be checked. Try walking onto the table mat again.");
               },
               onEnterTable: (id) => {
                 setBanner("");
@@ -2644,6 +2525,23 @@ import { roomRequest } from "./room-api.js";
                             }),
                           ],
                         }),
+                        presenceError
+                          ? jsxRuntime.jsx("p", { className: "note bad", role: "status", children: presenceError })
+                          : visitors
+                            ? jsxRuntime.jsxs("details", {
+                                className: "note",
+                                children: [
+                                  jsxRuntime.jsx("summary", {
+                                    "aria-live": "polite",
+                                    children: `${visitors.length} ${visitors.length === 1 ? "visitor" : "visitors"} in this room`,
+                                  }),
+                                  jsxRuntime.jsx("ul", {
+                                    "aria-label": "Visitors in this room",
+                                    children: visitors.map((name, index) => jsxRuntime.jsx("li", { children: name }, `${index}:${name}`)),
+                                  }),
+                                ],
+                              })
+                            : jsxRuntime.jsx("p", { className: "note", role: "status", children: "Connecting to room presence…" }),
                         banner &&
                           jsxRuntime.jsx("div", {
                             className: "banner",

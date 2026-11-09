@@ -14,7 +14,9 @@ rooms with a password, a 24-hour invite link, or both.
    project, run `supabase-setup.sql` first to create the original directory
    and organizer list. The new migration enables `pgcrypto` in the standard
    Supabase `extensions` schema and adds a room endpoint.
-3. Sign in with an existing organizer's Supabase email and password. If you
+3. In **SQL Editor**, run `supabase-pages-presence.sql` after the rooms
+   migration. It enables shared visitor and seat counts in the hosted app.
+4. Sign in with an existing organizer's Supabase email and password. If you
    need to add an organizer, create a confirmed email/password user under
    **Authentication → Users**, then run this in **SQL Editor** with that
    user's ID.
@@ -74,7 +76,12 @@ revoking a link ends access granted through the old one. A successful
 unlock is valid for up to eight hours in that browser tab. The floor checks
 access again periodically and when the tab regains focus. The lobby
 displays room names. Private table names and links are sent after unlock.
-Seat counts are scoped to tabs in the same browser profile.
+The visitor list and table seat counts are shared across browsers in the
+same room. Open the published site in two browser profiles and enter the
+same room. Both should show two visitors within a few seconds. Sit at a
+table in one browser and check the seat count in the other. Returning to
+the lobby removes that session from the room. A dropped connection can
+take up to 90 seconds to clear.
 
 To add multiple tables, choose **Manage tables → Upload meeting list** from
 the intended room. The app supports Excel, ODS, JSON, CSV, TSV, and TXT.
