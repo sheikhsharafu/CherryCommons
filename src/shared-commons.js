@@ -1,18 +1,14 @@
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./supabase-config.js";
 
-export const sharedEnabled = SUPABASE_PUBLISHABLE_KEY.startsWith("sb_publishable_");
-
-let clientPromise;
+let client;
 export function getSharedClient() {
-  clientPromise ??= import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm")
-    .then(({ createClient }) => createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-      auth: { persistSession: false },
-    }))
-    .catch((error) => {
-      clientPromise = null;
-      throw error;
+  if (!client) {
+    if (!globalThis.supabase?.createClient) throw new Error("The Supabase SDK could not load. Check the vendor folder.");
+    client = globalThis.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: { persistSession: false, detectSessionInUrl: false },
     });
-  return clientPromise;
+  }
+  return client;
 }
 
 export async function signInOrganizer(client, email, password) {
@@ -26,34 +22,4 @@ export async function signInOrganizer(client, email, password) {
     return "This account does not have organizer access.";
   }
   return "";
-}
-
-export async function readDirectory(client) {
-  const { data, error } = await client.from("cc_directory")
-    .select("config,revision").eq("id", 1).single();
-  if (error) throw error;
-  return data;
-}
-
-export async function saveDirectory(client, config, revision) {
-  const { data, error } = await client.from("cc_directory")
-    .update({ config, revision: revision + 1 })
-    .eq("id", 1).eq("revision", revision)
-    .select("config,revision").maybeSingle();
-  if (error) throw error;
-  return data;
-}
-
-export function countPresence(state) {
-  const counts = Object.create(null);
-  let online = 0;
-  for (const sessions of Object.values(state)) {
-    for (const session of sessions) {
-      online++;
-      if (typeof session.tableId === "string" && session.tableId) {
-        counts[session.tableId] = (counts[session.tableId] ?? 0) + 1;
-      }
-    }
-  }
-  return { online, counts };
 }

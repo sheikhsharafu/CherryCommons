@@ -1,125 +1,81 @@
-# Cherry Commons
+# Cherry Commons on GitHub Pages
 
-Cherry Commons is a virtual commons for meeting at shared tables. Customize an avatar,
-walk around the floor, and sit at a table. A table can open a configured Zoom,
-Google Meet, Microsoft Teams, or Webex link in a separate browser tab.
+Every room is a green floor with its own tables. Meeting links belong to
+tables. Public rooms are open to visitors. Organizers can protect private
+rooms with a password, a 24-hour invite link, or both.
 
-## Run locally
+## Set up Supabase
 
-From the project folder, run:
+1. Open the existing Cherry Commons project in Supabase. This package keeps
+   the original project URL and browser publishable key in
+   `src/supabase-config.js`. For a different project, use its HTTPS Supabase
+   URL and publishable key. Keep privileged keys out of the repository.
+2. In **SQL Editor**, run `supabase-pages-rooms.sql`. If this is a fresh
+   project, run `supabase-setup.sql` first to create the original directory
+   and organizer list. The new migration enables `pgcrypto` in the standard
+   Supabase `extensions` schema and adds a room endpoint.
+3. Sign in with an existing organizer's Supabase email and password. If you
+   need to add an organizer, create a confirmed email/password user under
+   **Authentication → Users**, then run this in **SQL Editor** with that
+   user's ID.
 
-```sh
-python3 -m http.server 8000
-```
+   ```sql
+   insert into public.cc_organizers (user_id)
+   values ('YOUR_AUTH_USER_UID'::uuid)
+   on conflict do nothing;
+   ```
 
-Open [http://localhost:8000](http://localhost:8000). The app uses browser modules
-and runs over HTTP with the dependencies included in this folder.
+The default **Cherry Commons** floor uses the existing `cc_directory` table.
+The prior Pages build can continue reading its tables while the floor is
+public. Making that floor private also restricts the old directory endpoint
+to organizers. Keep the floor public if the prior build still serves public
+visitors. Replace meeting links that were already shared publicly when
+moving them to a private room.
 
-Click the floor, then move with the arrow keys or WASD. Walk onto a table mat
-to sit and press a movement key to stand. Use **Manage tables** to edit tables
-and add meeting links. When the publishable key is blank, the app runs locally
-and the demo sign-in is `admin` / `root`.
+Rooms and edits made with the Python test server are in its local SQLite
+database. Re-create those rooms in the hosted app and use **Upload meeting
+list** in each room to import the links you want to carry over. Guests use
+the room password or invite link to unlock the floor.
 
-## Enable live counts and a shared directory
+## Publish on GitHub Pages
 
-The Supabase project URL and publishable key are set in
-`src/supabase-config.js`. Complete these steps in your Supabase project before
-publishing the shared version.
-
-1. In **SQL Editor**, open a new query, paste the contents of
-   `supabase-setup.sql`, and run it. This creates the shared directory, seeds
-   the numbered tables, and restricts edits to approved organizers.
-2. In **Authentication → Users**, create or choose a confirmed email/password
-   user for the organizer and copy its **User UID**. In **SQL Editor**, run the
-   organizer command at the bottom of `supabase-setup.sql` without the comment
-   markers and with your User UID in place of the placeholder.
-3. Keep **Realtime** and **Allow public access to channels** enabled in the
-   Supabase Realtime settings for this public site. Publish the updated files
-   to GitHub Pages, open **Manage tables**, and sign in as the organizer.
-
-Shared imports, edits, deletions, order, and closed times are published to all
-visitors. The directory is publicly readable, so use meeting links intended
-for public access. Previously imported local lists can be re-uploaded from
-their original files after you sign in to the shared directory.
-
-Open the site in a regular and private window and click **Enter commons** in
-both. Check that the directory shows **2 online**, then sit at a table and
-check its seat count in the other window. Presence counts open sessions.
-They show seats occupied in the app. Simultaneous arrivals on different
-devices can race because admission is not enforced by the database.
-
-## Delete multiple tables
-
-In **Manage tables**, check the tables you want to remove or choose
-**Select all on this page**. Click **Delete selected** and confirm the deletion.
-
-## Set closed times
-
-Edit a table to set its own **Closed times**. To use one schedule for all
-current tables, enter the start, end, and days under **Closed time for all
-tables** in **Building hours**. Schedules use the selected time zone. Removing
-the shared time leaves individual table schedules in place.
-
-Older saved setups keep their table names, meeting links, and schedules. The
-previous default closure label becomes **Closed**.
-
-## Import a meeting list
-
-In **Manage tables**, choose **Upload meeting list**, select a file, review the
-preview, and click **Import tables**.
-
-| File type | Layout |
-| --- | --- |
-| Excel (`.xlsx`, `.xls`, `.xlsm`, `.xlsb`) or OpenDocument (`.ods`) | Only the first worksheet is read. Use a `meeting_url` column or one link per row in a single column. Clickable link cells are supported. |
-| CSV or TSV (`.csv`, `.tsv`) | Use a `meeting_url` column or one link per row in a single column. |
-| JSON (`.json`) | Use an array of URL strings or objects with a `meeting_url` field. You can also wrap the array in `tables`, `meetings`, or `links`. |
-| Plain text (`.txt`) | Put one meeting link per line. |
-
-Use optional `name` and `caption` columns or JSON fields to label tables.
-
-```csv
-name,meeting_url,caption
-Study table,https://zoom.us/j/12345678901,Drop-in session
-Discussion table,https://meet.google.com/abc-defg-hij,"Questions, ideas, and notes"
-```
-
-Use HTTPS join links for Zoom, Google Meet, Microsoft Teams, or Webex. Links
-without a name get a generated name, such as **Zoom table 1**. A named entry
-updates an existing table with the same name, regardless of case. An unnamed
-entry with a matching link is skipped. An invalid entry stops the import
-before any changes are saved.
-
-Files are read in the browser. In shared mode, confirmed imports are saved to
-the shared directory. Each file can contain
-up to 500 meeting entries and be up to 1 MB.
-
-## Publish with GitHub Pages
-
-1. Create a GitHub repository and upload the extracted files to the root of
-   its `main` branch. Include `.nojekyll` and the `src/` and `vendor/` folders.
-2. In the repository, open **Settings → Pages**.
-3. Choose **Deploy from a branch**, select **main** and **/ (root)**, then save.
+1. Extract this package and upload its contents to the publishing branch
+   at the repository root. Include the hidden `.nojekyll` file and the
+   `src` and `vendor` directories. If replacing an existing site, place the
+   new `index.html` at the existing publishing root.
+2. In the GitHub repository, open **Settings → Pages**. Under **Build and
+   deployment**, select **Deploy from a branch**, then choose **main** and
+   **/ (root)**, or the branch you use for publishing.
+3. Open the HTTPS address listed in **Settings → Pages**. Asset and
+   invitation URLs work under a project path such as
+   `https://username.github.io/cherry-commons/`.
 
 [GitHub Pages publishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
-The app opens meetings in provider tabs. With Supabase configured, use
-**Manage tables** to set shared defaults.
+## Test before publishing
 
-## Project files
+After the SQL is applied, open a terminal in the folder containing
+`index.html` and serve the static files.
 
-| File | Purpose |
+| System | Command |
 | --- | --- |
-| `index.html` | App entry page |
-| `src/styles.css` | Interface styles |
-| `src/app.js` | Avatar, map, table management, and meeting links |
-| `src/supabase-config.js` | Public Supabase project settings |
-| `src/shared-commons.js` | Organizer sign-in, directory sync, and presence |
-| `supabase-setup.sql` | One-time database and permissions setup |
-| `src/meeting-import.js` | File parsing and normalization for meeting table imports |
-| `src/workbook-worker.js` | Reads spreadsheet files in a browser worker |
-| `vendor/runtime.js` | Bundled React, React DOM, Scheduler, and Phaser |
-| `vendor/sheetjs/` | SheetJS Community Edition and its license |
-| `THIRD_PARTY_NOTICES.txt` | Bundled software attribution and license terms |
+| Windows | `py -3 -m http.server 8000 --bind 127.0.0.1` |
+| macOS or Linux | `python3 -m http.server 8000 --bind 127.0.0.1` |
 
-The notices cover the bundled dependencies. The Cherry Commons application
-code has no separate open-source license in this release.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), choose an avatar, and
+enter the lobby. Select **Admin sign in** and use the organizer's Supabase
+credentials. Create a private room and add a link under **Manage tables**.
+Use an incognito window to test both the password and an invite generated
+from **Room settings**. Local preview connects to the configured Supabase
+database, so edits there also affect the hosted floors.
+
+Invite links are reusable for 24 hours. Generating a replacement or
+revoking a link ends access granted through the old one. A successful
+unlock is valid for up to eight hours in that browser tab. The floor checks
+access again periodically and when the tab regains focus. The lobby
+displays room names. Private table names and links are sent after unlock.
+Seat counts are scoped to tabs in the same browser profile.
+
+To add multiple tables, choose **Manage tables → Upload meeting list** from
+the intended room. The app supports Excel, ODS, JSON, CSV, TSV, and TXT.
+Use a `meeting_url` column and optionally `name` and `caption`.

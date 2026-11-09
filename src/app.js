@@ -1,6 +1,7 @@
-import { sharedEnabled, getSharedClient, signInOrganizer, readDirectory, saveDirectory, countPresence } from "./shared-commons.js";
 import { React, jsxRuntime, createRoot, Phaser } from "../vendor/runtime.js";
 import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
+import { RoomExperience, invitationFromLocation } from "./rooms.js";
+import { roomRequest } from "./room-api.js";
 
       function bootCherryCommons() {
         /* Map appearance and drawing helpers */
@@ -87,7 +88,8 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               floor.destroy();
             }
             this.add.image(0, 0, floorKey).setOrigin(0);
-            addMapText(this, 30, 33, "CHERRY COMMONS", 17, 800, "#43593e");
+            this.floorTitle = addMapText(this, 30, 33, this.bridge.roomName().toUpperCase(), 17, 800, "#43593e");
+            fitText(this.floorTitle, 490);
             this.physics.world.setBounds(MAP_MARGIN, MAP_MARGIN, width - MAP_MARGIN * 2, height - MAP_MARGIN * 2);
           }
           makeAvatar(x, y, color, name, appearance = { ...DEFAULT_APPEARANCE, shirt: "#" + color.toString(16).padStart(6, "0") }) {
@@ -351,7 +353,16 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
           openMeeting() {
             if (this.url) {
               try {
-                this.meetingWindow = window.open(this.url, "cherry-commons-meeting", "noopener=no");
+                const popup = window.open("about:blank", "_blank");
+                if (popup) {
+                  try {
+                    popup.opener = null;
+                    popup.location.replace(this.url);
+                    this.meetingWindow = popup;
+                  } catch {
+                    popup.close();
+                  }
+                }
               } catch {}
             }
             this.onState({
@@ -871,37 +882,6 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             },
           };
         }
-        /* Browser persistence and older saved setups */
-        const STORAGE_KEY = "cc.config.v2";
-        function migrateSavedConfig(saved) {
-          if (!saved || Array.isArray(saved.tables) || !Array.isArray(saved.rooms)) return saved;
-          const tables = saved.rooms.map((table) => {
-            if (!table) return table;
-            const { closures, ...settings } = table;
-            let markedSharedTime = false;
-            const closedTimes = (Array.isArray(closures) ? closures : []).map((time) => {
-              if (time?.label !== "Lunch") return time;
-              // Older saved schedules used this label for the shared time.
-              const id = markedSharedTime ? time.id : SHARED_CLOSED_TIME_ID;
-              markedSharedTime = true;
-              return { ...time, id, label: DEFAULT_CLOSED_TIME.label };
-            });
-            return { ...settings, closedTimes };
-          });
-          return { tz: saved.tz, tables };
-        }
-
-        function createBrowserStore() {
-          let timeZone = "America/New_York";
-          try {
-            timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || timeZone;
-          } catch {}
-          return createTableStore({
-            tz: timeZone,
-            load: () => migrateSavedConfig(JSON.parse(localStorage.getItem(STORAGE_KEY))),
-            save: (config) => localStorage.setItem(STORAGE_KEY, JSON.stringify(config)),
-          });
-        }
         /* Table placement and page navigation */
         const GRID_COLUMNS = 4;
         const TABLES_PER_PAGE = GRID_COLUMNS * 3;
@@ -921,16 +901,13 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
           });
         }
 
-        const PRESENCE_PREFIX = "cc.seat.v1.";
         const PRESENCE_TIMEOUT = 90_000;
 
-        const SEAT_LOCK = "cc.seat.admission";
-
-        function readSeatCounts(ownKey) {
+        function readSeatCounts(prefix, ownKey) {
           const counts = Object.create(null);
           const now = Date.now();
           for (const key of Object.keys(localStorage)) {
-            if (key === ownKey || !key.startsWith(PRESENCE_PREFIX)) continue;
+            if (key === ownKey || !key.startsWith(prefix)) continue;
             let record;
             try { record = JSON.parse(localStorage.getItem(key)); } catch { continue; }
             if (typeof record?.desk !== "string" || !(record.until > now)) continue;
@@ -944,14 +921,14 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
         }
 
         // The lock keeps two tabs from claiming the last seat at the same time.
-        async function claimSeat(key, table, getCapacity, isCurrent) {
+        async function claimSeat(prefix, key, table, getCapacity, isCurrent) {
           try {
             if (!navigator.locks) return "unavailable";
-            return await navigator.locks.request(SEAT_LOCK, () => {
+            return await navigator.locks.request(prefix + "admission", () => {
               if (!isCurrent()) return "cancelled";
               const capacity = getCapacity();
               if (!capacity) return "closed";
-              if ((readSeatCounts(key)[table] ?? 0) >= capacity) return "full";
+              if ((readSeatCounts(prefix, key)[table] ?? 0) >= capacity) return "full";
               writeSeat(key, table);
               return "joined";
             });
@@ -960,20 +937,22 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
           }
         }
 
-        function useTablePresence(onSeatReset) {
-          const [key] = React.useState(() => PRESENCE_PREFIX + (crypto.randomUUID?.() ?? createId("visitor")));
+        function useTablePresence(roomId, onSeatReset) {
+          const sitePath = new URL(".", location.href).pathname;
+          const prefix = `cc.seat.room.${encodeURIComponent(sitePath)}.${roomId}.`;
+          const [key] = React.useState(() => prefix + (crypto.randomUUID?.() ?? createId("visitor")));
           const seat = React.useRef(null);
           const [counts, setCounts] = React.useState({});
 
           const refresh = React.useCallback(() => {
             let next;
-            try { next = readSeatCounts(); } catch { return; }
+            try { next = readSeatCounts(prefix); } catch { return; }
             setCounts((previous) =>
               Object.keys(next).length === Object.keys(previous).length &&
               Object.keys(next).every((table) => next[table] === previous[table])
                 ? previous : next,
             );
-          }, []);
+          }, [prefix]);
 
           const clearSeat = React.useCallback(() => {
             seat.current = null;
@@ -991,12 +970,12 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               clearSeat();
             }
             function sync(event) {
-              if (!event.key || event.key.startsWith(PRESENCE_PREFIX)) refresh();
+              if (!event.key || event.key.startsWith(prefix)) refresh();
             }
             async function renew() {
               try {
                 if (seat.current) {
-                  await navigator.locks.request(SEAT_LOCK, () => {
+                  await navigator.locks.request(prefix + "admission", () => {
                     if (!seat.current) return;
                     const record = JSON.parse(localStorage.getItem(key));
                     if (record?.desk === seat.current && record.until > Date.now()) {
@@ -1027,13 +1006,13 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               document.removeEventListener("visibilitychange", renew);
               clearSeat();
             };
-          }, [key, clearSeat, onSeatReset, refresh]);
+          }, [prefix, key, clearSeat, onSeatReset, refresh]);
 
           return {
             counts,
             releaseSeat,
             async reserveSeat(table, getCapacity, isCurrent) {
-              const result = await claimSeat(key, table, getCapacity, isCurrent);
+              const result = await claimSeat(prefix, key, table, getCapacity, isCurrent);
               if (result === "joined") seat.current = table;
               refresh();
               return result;
@@ -1448,53 +1427,6 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             ],
           });
         }
-        function ManagementSignIn({ onSignIn }) {
-          const [error, setError] = React.useState("");
-          const [submitting, setSubmitting] = React.useState(false);
-          async function signIn(event) {
-            event.preventDefault();
-            const credentials = new FormData(event.currentTarget);
-            const username = String(credentials.get("username")).trim();
-            const password = String(credentials.get("password"));
-            setSubmitting(true);
-            setError(await onSignIn(username, password));
-            setSubmitting(false);
-          }
-          return jsxRuntime.jsxs("form", {
-            className: "editor",
-            onSubmit: signIn,
-            children: [
-              jsxRuntime.jsx("h3", { children: "Sign in to manage tables" }),
-              jsxRuntime.jsxs("label", {
-                children: [
-                  sharedEnabled ? "Organizer email" : "Username",
-                  jsxRuntime.jsx("input", {
-                    type: sharedEnabled ? "email" : "text",
-                    name: "username",
-                    autoComplete: "username",
-                    autoCapitalize: "none",
-                    spellCheck: false,
-                    autoFocus: true,
-                    required: true,
-                  }),
-                ],
-              }),
-              jsxRuntime.jsxs("label", {
-                children: [
-                  "Password",
-                  jsxRuntime.jsx("input", {
-                    name: "password",
-                    type: "password",
-                    autoComplete: "current-password",
-                    required: true,
-                  }),
-                ],
-              }),
-              error && jsxRuntime.jsx("p", { className: "note bad", role: "alert", children: error }),
-              jsxRuntime.jsx("button", { className: "primary", type: "submit", disabled: submitting, children: submitting ? "Signing in…" : "Sign in" }),
-            ],
-          });
-        }
         function MeetingTableImport({ tables, onImport, onAdded }) {
           const fileInput = React.useRef(null);
           const [reading, setReading] = React.useState(false);
@@ -1802,9 +1734,7 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               }),
               jsxRuntime.jsx("p", {
                 className: "note",
-                children: sharedEnabled
-                  ? "Changes are published to everyone. Use meeting links intended for public access."
-                  : "Changes are saved in this browser. Only add links you are authorized to share.",
+                children: "Meeting links are visible to anyone who can enter this room.",
               }),
             ],
           });
@@ -2146,9 +2076,13 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
         }
         function App() {
           const [profile, setProfile] = React.useState(null);
+          const [invitation] = React.useState(invitationFromLocation);
           return profile
-            ? jsxRuntime.jsx(Commons, {
-                profile: profile,
+            ? jsxRuntime.jsx(RoomExperience, {
+                invitation,
+                renderRoom: (snapshot, onLeaveRoom) => jsxRuntime.jsx(Commons, {
+                  profile, initialSnapshot: snapshot, onLeaveRoom,
+                }, snapshot.room.id),
               })
             : jsxRuntime.jsx(Welcome, {
                 onStart: setProfile,
@@ -2440,123 +2374,73 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
           return PROVIDER_LABELS[table.meeting.provider] || table.meeting.provider;
         }
         /* Commons state, map focus, and sidebar */
-        function Commons({ profile: profile }) {
+        function Commons({ profile, initialSnapshot, onLeaveRoom }) {
           const stageRef = React.useRef(null);
           const tablesRef = React.useRef([]);
           const sceneRef = React.useRef(null);
+          const directoryRef = React.useRef(initialSnapshot);
           const storeRef = React.useRef(null);
-          storeRef.current || (storeRef.current = createBrowserStore());
-          const [config, setConfig] = React.useState({
-            tz: "UTC",
-            tables: [],
-          });
+          storeRef.current ??= createTableStore({ load: () => initialSnapshot.config, tz: initialSnapshot.config.tz });
+          const [config, setConfig] = React.useState(() => storeRef.current.getConfig());
+          const [room, setRoom] = React.useState(initialSnapshot.room);
+          const [admin, setAdmin] = React.useState(initialSnapshot.admin);
           const [now, setNow] = React.useState(() => new Date());
           const [meetingState, setMeetingState] = React.useState({ tableId: null, needsClick: false });
-          const [managementPanel, setManagementPanel] = React.useState(null);
-          const panelRef = React.useRef(null);
-          const managingTables = managementPanel === "manage";
-          const directoryRef = React.useRef(null);
+          const [managerOpen, setManagerOpen] = React.useState(false);
+          const managingTables = admin && managerOpen;
           const writePending = React.useRef(false);
-          const sharedClient = React.useRef(null);
-          const [directoryStatus, setDirectoryStatus] = React.useState(sharedEnabled ? "loading" : "local");
-          const [presence, setPresence] = React.useState(null);
-          const presenceChannel = React.useRef(null);
-          const occupiedTable = React.useRef(null);
-          function showManagementPanel(panel) {
-            if (panelRef.current === "manage" && panel !== "manage" && sharedClient.current) {
-              void sharedClient.current.auth.signOut({ scope: "local" });
-            }
-            panelRef.current = panel;
-            setManagementPanel(panel);
-          }
-
-          async function signIn(username, password) {
-            if (!sharedEnabled) {
-              if (username !== "admin" || password !== "root") return "Incorrect username or password.";
-              showManagementPanel("manage");
-              return "";
-            }
-            try {
-              const client = await getSharedClient();
-              const error = await signInOrganizer(client, username, password);
-              if (!error && panelRef.current === "sign-in") showManagementPanel("manage");
-              return error;
-            } catch {
-              return "Could not reach Supabase. Try again.";
-            }
-          }
+          const roomPath = `/rooms/${initialSnapshot.room.id}`;
 
           function applyDirectory(snapshot) {
-            if (!snapshot || snapshot.revision <= (directoryRef.current?.revision ?? -1)) return;
-            directoryRef.current = snapshot;
-            storeRef.current = createTableStore({ load: () => snapshot.config, tz: snapshot.config.tz });
-            setConfig(storeRef.current.getConfig());
-            setDirectoryStatus("ready");
+            setAdmin(snapshot.admin);
+            const current = directoryRef.current;
+            const newerRoom = snapshot.room.revision > current.room.revision;
+            const newerTables = snapshot.revision > current.revision;
+            if (newerRoom) setRoom(snapshot.room);
+            if (newerTables) {
+              storeRef.current = createTableStore({ load: () => snapshot.config, tz: snapshot.config.tz });
+              setConfig(storeRef.current.getConfig());
+            }
+            if (newerRoom || newerTables) {
+              directoryRef.current = {
+                ...current,
+                room: newerRoom ? snapshot.room : current.room,
+                config: newerTables ? snapshot.config : current.config,
+                revision: newerTables ? snapshot.revision : current.revision,
+              };
+            }
           }
 
           React.useEffect(() => {
-            if (!sharedEnabled) return;
             let active = true;
-            let channel;
-            let client;
-            let refreshTimer;
+            let reading = false;
             async function refreshDirectory() {
+              if (reading) return;
+              reading = true;
               try {
-                const snapshot = await readDirectory(client);
+                const snapshot = await roomRequest(roomPath);
                 if (active) applyDirectory(snapshot);
-              } catch {
-                if (active && !directoryRef.current) setDirectoryStatus("error");
+              } catch (error) {
+                if (active && (error.status === 403 || error.status === 404)) onLeaveRoom(error.message);
+              } finally {
+                reading = false;
               }
             }
-
-            getSharedClient().then((connectedClient) => {
-              if (!active) return;
-              client = connectedClient;
-              sharedClient.current = client;
-              channel = client.channel("cherry-commons-live")
-                .on("presence", { event: "sync" }, () => {
-                  if (active && presenceChannel.current === channel) setPresence(countPresence(channel.presenceState()));
-                })
-                .on("postgres_changes", {
-                  event: "UPDATE", schema: "public", table: "cc_directory", filter: "id=eq.1",
-                }, refreshDirectory)
-                .subscribe((status) => {
-                  if (!active) return;
-                  if (status === "SUBSCRIBED") {
-                    presenceChannel.current = channel;
-                    void channel.track({ tableId: occupiedTable.current });
-                    void refreshDirectory();
-                  } else {
-                    presenceChannel.current = null;
-                    setPresence(null);
-                  }
-                });
-              void refreshDirectory();
-              refreshTimer = setInterval(refreshDirectory, 15000);
-            }).catch(() => {
-              if (active) setDirectoryStatus("error");
-            });
+            const timer = setInterval(refreshDirectory, 10000);
+            window.addEventListener("focus", refreshDirectory);
             return () => {
               active = false;
-              clearInterval(refreshTimer);
-              presenceChannel.current = null;
-              if (channel) void client.removeChannel(channel);
+              clearInterval(timer);
+              window.removeEventListener("focus", refreshDirectory);
             };
           }, []);
 
-          React.useEffect(() => {
-            occupiedTable.current = meetingState.tableId;
-            void presenceChannel.current?.track({ tableId: meetingState.tableId });
-          }, [meetingState.tableId]);
           const [banner, setBanner] = React.useState("");
           const resetSeat = React.useCallback((expired) => {
             sceneRef.current?.leaveTable();
             if (expired) setBanner("Your seat expired. Walk onto the table mat to try again.");
           }, []);
-          const { counts: localCounts, reserveSeat, releaseSeat } = useTablePresence(resetSeat);
-          const counts = presence?.counts ?? localCounts;
-          const liveCountsRef = React.useRef(null);
-          liveCountsRef.current = presence?.counts ?? null;
+          const { counts, reserveSeat, releaseSeat } = useTablePresence(room.id, resetSeat);
           const meetingController = React.useMemo(
             () => new MeetingController(setMeetingState),
             [],
@@ -2596,17 +2480,9 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             sceneRef.current?.setCounts(counts);
           }, [counts]);
           async function updateTables(operation) {
-            if (panelRef.current !== "manage") return { error: "Sign in to manage tables." };
-            if (!sharedEnabled) {
-              const result = operation(storeRef.current);
-              if (result.ok) setConfig(storeRef.current.getConfig());
-              return result;
-            }
-
-            const snapshot = directoryRef.current;
-            const client = sharedClient.current;
-            if (!snapshot || !client) return { error: "The shared directory is unavailable." };
+            if (!managingTables) return { error: "Sign in as an admin to manage tables." };
             if (writePending.current) return { error: "A change is already being saved. Try again shortly." };
+            const snapshot = directoryRef.current;
             writePending.current = true;
             try {
               const draft = createTableStore({ load: () => snapshot.config, tz: snapshot.config.tz });
@@ -2614,15 +2490,14 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               if (!result.ok) return result;
               const nextConfig = draft.getConfig();
               if (JSON.stringify(nextConfig) === JSON.stringify(storeRef.current.getConfig())) return result;
-              const saved = await saveDirectory(client, nextConfig, snapshot.revision);
-              if (!saved) {
-                applyDirectory(await readDirectory(client));
-                return { error: "The directory changed before this save. Review the latest tables and try again." };
-              }
+              const saved = await roomRequest(roomPath + "/tables", { config: nextConfig, revision: snapshot.revision });
               applyDirectory(saved);
               return result;
-            } catch {
-              return { error: "Could not save the shared directory. Check your connection and organizer access." };
+            } catch (error) {
+              if (error.status === 409) {
+                try { applyDirectory(await roomRequest(roomPath)); } catch {}
+              }
+              return { error: error.message };
             } finally {
               writePending.current = false;
             }
@@ -2640,29 +2515,16 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             clearSharedClosedTime: () => updateTables((store) => store.clearSharedClosedTime()),
           };
           React.useEffect(() => {
-            if (sharedEnabled) return;
-            function syncTableSettings(event) {
-              if (event.key && event.key !== STORAGE_KEY) return;
-              storeRef.current = createBrowserStore();
-              setConfig(storeRef.current.getConfig());
-            }
-            window.addEventListener("storage", syncTableSettings);
-            return () => window.removeEventListener("storage", syncTableSettings);
-          }, []);
-
-          React.useEffect(() => {
             let active = true;
             const bridge = {
               me: profile,
+              roomName: () => directoryRef.current.room.name,
               reserveTable: (id, isCurrent) => {
-                const liveCount = liveCountsRef.current?.[id];
                 const tableCapacity = () => {
-                  const config = sharedEnabled ? storeRef.current.getConfig() : createBrowserStore().getConfig();
+                  const config = storeRef.current.getConfig();
                   const table = config.tables.find((item) => item.id === id);
                   return table && getTableSchedule(table, new Date(), config.tz).open ? table.capacity : null;
                 };
-                if (sharedEnabled && !directoryRef.current) return "unavailable";
-                if (liveCount != null && liveCount >= tableCapacity() && tableCapacity()) return "full";
                 return reserveSeat(id, tableCapacity, () => active && isCurrent());
               },
               onSeatDenied: (table, result) => {
@@ -2703,9 +2565,7 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             const scene = new CommonsScene();
             sceneRef.current = scene;
             game.scene.add("world", scene, false);
-            const initialConfig = sharedEnabled ? { tz: "UTC", tables: [] } : storeRef.current.getConfig();
-            const firstPage = buildCommonsView(initialConfig, new Date()).tables.slice(0, TABLES_PER_PAGE);
-            setConfig(initialConfig);
+            const firstPage = buildCommonsView(storeRef.current.getConfig(), new Date()).tables.slice(0, TABLES_PER_PAGE);
             tablesRef.current = firstPage;
             game.scene.start("world", { bridge, tables: firstPage, page: 0 });
 
@@ -2716,6 +2576,10 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
               game.destroy(true);
             };
           }, []);
+          React.useEffect(() => {
+            const title = sceneRef.current?.floorTitle;
+            if (title) fitText(title.setText(room.name.toUpperCase()), 490);
+          }, [room.name]);
           const pendingMeeting = meetingState.needsClick
             ? visibleTables.find((table) => table.id === meetingState.tableId && table.meeting)
             : null;
@@ -2724,16 +2588,24 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
             children: jsxRuntime.jsxs("div", {
               className: "commons-shell",
               children: [
-                jsxRuntime.jsx("header", {
-                  className: "studio-header",
-                  children: jsxRuntime.jsx("h1", { children: "Cherry Commons" }),
+                jsxRuntime.jsxs("header", {
+                  className: "studio-header room-map-heading",
+                  children: [
+                    jsxRuntime.jsxs("div", {
+                      children: [
+                        jsxRuntime.jsx("h1", { children: room.name }),
+                        jsxRuntime.jsx("span", { className: "room-badge", children: room.visibility === "private" ? "Private room" : "Public room" }),
+                      ],
+                    }),
+                    jsxRuntime.jsx("button", { type: "button", onClick: () => onLeaveRoom(), children: "Room lobby" }),
+                  ],
                 }),
                 jsxRuntime.jsxs("div", {
                   className: "app",
                   children: [
                     jsxRuntime.jsxs("section", {
                       className: "commons-map",
-                      "aria-label": "Cherry Commons map",
+                      "aria-label": `${room.name} floor`,
                       children: [
                         jsxRuntime.jsx("div", {
                           className: "stage",
@@ -2765,17 +2637,12 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
                       children: [
                         jsxRuntime.jsxs("header", {
                           children: [
-                            jsxRuntime.jsx("h2", { children: presence ? `Table directory · ${presence.online} online` : "Table directory" }),
-                            jsxRuntime.jsx("button", {
-                              onClick: () => showManagementPanel(managementPanel ? null : "sign-in"),
-                              children: managingTables ? (sharedEnabled ? "Sign out" : "Lock") : managementPanel ? "Cancel" : "Manage tables",
+                            jsxRuntime.jsx("h2", { children: "Table directory" }),
+                            admin && jsxRuntime.jsx("button", {
+                              onClick: () => setManagerOpen(!managerOpen),
+                              children: managingTables ? "Done" : "Manage tables",
                             }),
                           ],
-                        }),
-                        sharedEnabled && directoryStatus !== "ready" && jsxRuntime.jsx("p", {
-                          className: "note",
-                          role: "status",
-                          children: directoryStatus === "loading" ? "Loading shared tables…" : "Shared tables are unavailable. Check Supabase setup and connectivity.",
                         }),
                         banner &&
                           jsxRuntime.jsx("div", {
@@ -2791,8 +2658,6 @@ import { MEETING_FILE_TYPES, readMeetingFile } from "./meeting-import.js";
                             onClick: () => meetingController.retryExternal(pendingMeeting),
                             children: `Open meeting · ${pendingMeeting.name}`,
                           }),
-                        managementPanel === "sign-in" &&
-                          jsxRuntime.jsx(ManagementSignIn, { onSignIn: signIn }),
                         managingTables
                           ? jsxRuntime.jsx(TableManager, {
                               config: config,

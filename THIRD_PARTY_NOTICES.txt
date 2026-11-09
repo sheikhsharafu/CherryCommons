@@ -95,3 +95,8 @@ https://sheetjs.com/
 Copyright (C) 2012-present SheetJS LLC
 Licensed under the Apache License, Version 2.0.
 See vendor/sheetjs/LICENSE.txt for the full license and attribution.
+
+Supabase JS 2.119.0
+-------------------
+https://github.com/supabase/supabase-js
+The official browser UMD bundle and its MIT license are in vendor/supabase/.

@@ -677,3 +677,58 @@ label select {
   .commons { padding-inline: 12px; }
   .commons-map { padding: 7px; }
 }
+
+.room-lobby { max-width: 880px; }
+.room-lobby-card {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 3px solid var(--ink);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+.room-lobby-card h2, .room-lobby-card h3 { margin: 0; }
+.room-lobby-heading, .room-map-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.room-map-heading > div { min-width: 0; }
+.room-map-heading h1 { overflow-wrap: anywhere; }
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+.room-tile, .room-unlock {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: #e1efda;
+}
+.room-tile h3 { overflow-wrap: anywhere; }
+.room-tile-private, .room-unlock { background: #eee4fa; }
+.room-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.room-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; }
+.room-settings, .room-password, .room-invite { display: grid; gap: 8px; }
+.room-settings, .room-password { width: min(100%, 410px); }
+.room-settings .room-checkbox { display: flex; align-items: center; gap: 8px; }
+.room-settings .room-checkbox input { width: auto; }
+.room-invite-link label { flex: 1 1 220px; min-width: 0; }
