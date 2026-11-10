@@ -357,7 +357,6 @@ import { useRoomPresence } from "./room-presence.js";
                 const popup = window.open("about:blank", "_blank");
                 if (popup) {
                   try {
-                    popup.opener = null;
                     popup.location.replace(this.url);
                     this.meetingWindow = popup;
                   } catch {
