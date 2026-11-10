@@ -38,7 +38,7 @@ function PasswordForm({ label, action, busy, onSubmit, focus, withEmail }) {
   );
 }
 
-function RoomEditor({ room, onSave, onClose, onInvite, busy, inviteUrl, notice }) {
+function RoomEditor({ room, onSave, onClose, onInvite, onDelete, busy, inviteUrl, notice }) {
   const [visibility, setVisibility] = React.useState(room?.visibility ?? "public");
   const [copied, setCopied] = React.useState(false);
   React.useEffect(() => setCopied(false), [inviteUrl]);
@@ -99,6 +99,9 @@ function RoomEditor({ room, onSave, onClose, onInvite, busy, inviteUrl, notice }
         h("button", { type: "button", onClick: copy }, copied ? "Copied" : "Copy link"),
       ),
     ),
+    room && h("button", { type: "button", disabled: busy, onClick: () => {
+      if (window.confirm(`Delete "${room.name}"? This permanently removes its tables and schedules, invalidates its invite links, and returns visitors to the lobby.`)) onDelete();
+    } }, "Delete room"),
     notice && h("p", { className: "note", role: "status" }, notice),
   );
 }
@@ -234,6 +237,13 @@ export function RoomExperience({ invitation, renderRoom }) {
           await refresh();
           editRoom(room.id);
           setNotice("Room settings saved.");
+        }),
+        onDelete: () => act(async () => {
+          await roomRequest(`/rooms/${editedRoom.id}/delete`, { revision: editedRoom.revision });
+          setLobby((previous) => ({ ...previous, rooms: previous.rooms.filter((room) => room.id !== editedRoom.id) }));
+          setLockedId(null);
+          editRoom(null);
+          await refresh();
         }),
         onInvite: (revoke) => act(async () => {
           const { token } = await roomRequest(`/rooms/${editedRoom.id}/invite`, { revoke });

@@ -36,7 +36,7 @@ export async function roomRequest(path, body = {}) {
   if (path === "/state") action = "lobby";
   else if (path === "/rooms") action = "create";
   else {
-    const match = /^\/rooms\/([a-z0-9-]{1,40})(?:\/(enter|settings|invite|tables))?$/.exec(path);
+    const match = /^\/rooms\/([a-z0-9-]{1,40})(?:\/(enter|settings|invite|tables|delete))?$/.exec(path);
     if (!match) throw new Error("Unknown room request.");
     room = match[1];
     action = match[2] ?? "read";
